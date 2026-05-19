@@ -1,3 +1,16 @@
+wandb/
+.vscode/
+datasets/
+
+# Large output directories — data files, checkpoints, logs
+testing/
+training/
+pquant_experiments/results/
+pquant_experiments/runs/
+pquant_experiments/wandb/
+*.root
+*.pt
+
 .DS_Store
 
 # Byte-compiled / optimized / DLL files

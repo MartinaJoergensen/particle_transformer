@@ -68,7 +68,7 @@ weaver \
     --data-test "${DATADIR}/test_file_*.parquet" \
     --data-config data/QuarkGluon/qg_${FEATURE_TYPE}.yaml --network-config $modelopts \
     --model-prefix training/QuarkGluon/${model}/{auto}${suffix}/net \
-    --num-workers 1 --fetch-step 1 --in-memory --train-val-split 0.8889 \
+    --num-workers 8 --fetch-step 1 --in-memory --train-val-split 0.8889 \
     --batch-size 512 --samples-per-epoch 1600000 --samples-per-epoch-val 200000 --num-epochs 20 --gpus 0 \
     --start-lr $lr --optimizer ranger --log logs/QuarkGluon_${model}_{auto}${suffix}.log --predict-output pred.root \
     --tensorboard QuarkGluon_${FEATURE_TYPE}_${model}${suffix} \

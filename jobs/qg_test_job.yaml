@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: part-qg-test
+spec:
+  template:
+    metadata:
+      labels:
+        mount-eos: "true"
+        mount-cvmfs: "true"
+        home: "eos"
+        mount-afs: "true"
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
+      containers:
+      - name: part-qg-test
+        image: registry.cern.ch/ngt/pytorch:2.3.1
+        command:
+        - "bash"
+        - "-c"
+        - |
+          source /eos/home-m/majorgen/miniconda3/etc/profile.d/conda.sh &&
+          conda activate torch_env &&
+          cd /eos/home-m/majorgen/particle_transformer &&
+          weaver \
+            --predict \
+            --data-test "/eos/home-m/majorgen/particle_transformer/datasets/QuarkGluon/test_file_*.parquet" \
+            --data-config /eos/home-m/majorgen/particle_transformer/data/QuarkGluon/qg_kin.yaml \
+            --network-config /eos/home-m/majorgen/particle_transformer/networks/example_ParticleTransformer.py \
+            --model-prefix /eos/home-m/majorgen/particle_transformer/training/QuarkGluon/run_20260317_1547/net_best_epoch_state.pt \
+            --predict-output /eos/home-m/majorgen/particle_transformer/training/QuarkGluon/run_20260317_1547/pred.root \
+            --num-workers 0 \
+            --gpus 0 \
+            2>&1 | tee /eos/home-m/majorgen/particle_transformer/training/QuarkGluon/run_20260317_1547/test.log
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+      restartPolicy: Never

@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pquant-dst-train-run3
+spec:
+  template:
+    metadata:
+      labels:
+        mount-eos: "true"
+        mount-cvmfs: "true"
+        home: "eos"
+        mount-afs: "true"
+    spec:
+      # nodeSelector:
+      #   nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
+      containers:
+      - name: pquant-dst-train-run3
+        image: registry.cern.ch/ngt/pytorch:2.3.1
+        command:
+        - "bash"
+        - "-c"
+        - |
+          source /eos/home-m/majorgen/miniconda3/etc/profile.d/conda.sh &&
+          conda activate torch_env &&
+          cd /eos/home-m/majorgen/particle_transformer/pquant_experiments &&
+          python train_pquant.py \
+            2>&1 | tee /eos/home-m/majorgen/particle_transformer/pquant_experiments/results/pquant_dst_run3/train_$(date +%Y%m%d_%H%M).log
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+      restartPolicy: Never

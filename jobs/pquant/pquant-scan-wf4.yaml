@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pquant-scan-wf4
+spec:
+  template:
+    metadata:
+      labels:
+        mount-eos: "true"
+        mount-cvmfs: "true"
+        home: "eos"
+        mount-afs: "true"
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-L40S
+
+      containers:
+      - name: pquant-scan-wf4
+        image: registry.cern.ch/ngt/pytorch:2.3.1
+        command:
+        - "bash"
+        - "-c"
+        - |
+          source /eos/home-m/majorgen/miniconda3/etc/profile.d/conda.sh &&
+          conda activate torch_env &&
+          cd /eos/home-m/majorgen/particle_transformer/pquant_experiments &&
+          python train_pquant_quant.py --weight-f-bits 4 \
+            2>&1 | tee /eos/home-m/majorgen/particle_transformer/pquant_experiments/results/quant_scan_wf4/train_$(date +%Y%m%d_%H%M).log
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+      restartPolicy: Never

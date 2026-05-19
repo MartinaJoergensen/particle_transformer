@@ -1,0 +1,42 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pquant-run3-test
+spec:
+  template:
+    metadata:
+      labels:
+        mount-eos: "true"
+        mount-cvmfs: "true"
+        home: "eos"
+        mount-afs: "true"
+    spec:
+      # nodeSelector:
+      #   nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
+      containers:
+      - name: pquant-run3-test
+        image: registry.cern.ch/ngt/pytorch:2.3.1
+        command:
+        - "bash"
+        - "-c"
+        - |
+          source /eos/home-m/majorgen/miniconda3/etc/profile.d/conda.sh &&
+          conda activate torch_env &&
+          cd /eos/home-m/majorgen/particle_transformer &&
+          export KERAS_BACKEND=torch &&
+          OUTDIR=/eos/home-m/majorgen/particle_transformer/testing/JetClass/run3_epoch19_$(date +%Y%m%d_%H%M) &&
+          mkdir -p $OUTDIR &&
+          weaver \
+            --predict \
+            --data-test "/eos/home-m/majorgen/particle_transformer/datasets/JetClass/Pythia/test_20M/*.root" \
+            --data-config /eos/home-m/majorgen/particle_transformer/data/JetClass/JetClass_full.yaml \
+            --network-config /eos/home-m/majorgen/particle_transformer/networks/ParticleTransformerWrapper_pquant_infer.py \
+            --model-prefix "/eos/home-m/majorgen/particle_transformer/pquant_experiments/results/pquant_dst_run3/checkpoint_epoch_19.pt" \
+            --predict-output $OUTDIR/pred.root \
+            --num-workers 0 \
+            --gpus 0 \
+            2>&1 | tee $OUTDIR/test.log
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+      restartPolicy: Never
