@@ -119,3 +119,4 @@ if __name__ == "__main__":
         config=config.model_dump()
     )
     main(config,args.weight_f_bits)
+    wandb.finish()

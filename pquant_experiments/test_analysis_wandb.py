@@ -89,7 +89,10 @@ def graphql(query, variables, api_key):
         timeout=30,
     )
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    if "errors" in data:
+        raise RuntimeError(f"GraphQL error: {data['errors']}")
+    return data
 
 metrics = {"test/acc": test_acc, "test/auc_ovo_macro": auc_ovo}
 for cls in CLASSES:
@@ -100,11 +103,11 @@ for cls in SIGNAL_CLASSES:
 
 api_key = get_api_key()
 
-# Step 1: resolve run name → internal bucket id
+# Step 1: resolve run name → internal bucket id + fetch existing summary
 result = graphql("""
     query GetRun($entity: String!, $project: String!, $run: String!) {
         project(name: $project, entityName: $entity) {
-            run(name: $run) { id name displayName }
+            run(name: $run) { id name displayName summaryMetrics }
         }
     }
 """, {"entity": "martina-jorgensen-cern", "project": "par-t-quant", "run": args.wandb_run_id}, api_key)
@@ -114,15 +117,19 @@ if run_data is None:
     print(f"\nRun '{args.wandb_run_id}' not found. Full response: {result}")
     raise SystemExit(1)
 bucket_id = run_data["id"]
-print(f"Found run: {run_data['displayName']} (name={run_data['name']}, id={bucket_id})")
+print(f"Found run: {run_data['displayName']} (name={run_data['name']})")
 
-# Step 2: write summary metrics
+# Merge new metrics into existing summary so we don't overwrite training metrics
+existing = json.loads(run_data["summaryMetrics"] or "{}")
+existing.update(metrics)
+
+# Step 2: write merged summary back
 graphql("""
     mutation UpsertBucket($id: String!, $summaryMetrics: String) {
         upsertBucket(input: {id: $id, summaryMetrics: $summaryMetrics}) {
             bucket { id }
         }
     }
-""", {"id": bucket_id, "summaryMetrics": json.dumps(metrics)}, api_key)
+""", {"id": bucket_id, "summaryMetrics": json.dumps(existing)}, api_key)
 
 print("\nLogged to W&B successfully.")

@@ -1,147 +1,195 @@
 #!/usr/bin/env python3
 """
-One-click plot: best validation accuracy and test OvO AUC vs weight fractional bits (wf).
-Pulls all relevant runs from W&B project par-t-quant and saves a figure.
+One-click plot: test accuracy and OvO AUC vs weight fractional bits (wf).
+Pulls all relevant runs from W&B project par-t-quant and saves TWO separate figures.
 
 Usage:
     cd /eos/home-m/majorgen/particle_transformer
     python3 pquant_experiments/plot_accuracy_vs_wf.py
-    python3 pquant_experiments/plot_accuracy_vs_wf.py --output my_plot.pdf --csv data.csv
+    python3 pquant_experiments/plot_accuracy_vs_wf.py \
+        --output-acc acc_vs_wf.pdf --output-auc auc_vs_wf.pdf --csv data.csv
 """
 
 import argparse
 import re
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pandas as pd
 import wandb
 
-ENTITY = "martina-jorgensen-cern"
-PROJECT = "par-t-quant"
-BASELINE_ACC = 86.05  # full-precision ParT baseline (%)
+ENTITY       = "martina-jorgensen-cern"
+PROJECT      = "par-t-quant"
+BASELINE_ACC = 86.05   # full-precision ParT baseline (%)
+
+# ── W&B-inspired light palette ───────────────────────────────────────────────
+BG       = "#ffffff"   # white figure / axes background
+BLUE     = "#0073E6"   # W&B blue — main line / marker colour
+TEXT     = "#4a5568"   # mid-grey labels (W&B style)
+GRID     = "#e8edf2"   # faint horizontal grid
+GREY_DIM = "#9aacbb"   # captions / secondary text
+
+mpl.rcParams.update({
+    "figure.facecolor":  BG,
+    "axes.facecolor":    BG,
+    "savefig.facecolor": BG,
+    "text.color":        TEXT,
+    "axes.labelcolor":   TEXT,
+    "xtick.color":       TEXT,
+    "ytick.color":       TEXT,
+    "axes.edgecolor":    GRID,
+    "grid.color":        GRID,
+    "legend.facecolor":  BG,
+    "legend.edgecolor":  GRID,
+    "legend.labelcolor": TEXT,
+    "font.family":       "sans-serif",
+})
 
 
 def get_wf(run):
-    """Extract weight fractional bits (wf) from run config or run name."""
+    """Extract weight fractional bits (wf) from run config or name."""
     wf = run.config.get("WEIGHT_F_BITS") or run.config.get("weight_f_bits")
     if wf is not None:
         return int(wf)
-    # Parse from run name, e.g. "scan-wf6" → 6, "run9-i4f11" won't match
     m = re.search(r"wf(\d+)", run.name or "")
     if m:
         return int(m.group(1))
-    # run9-i4f11 is the wf=14 reference run
-    if run.id == "g4rpn4g0" or "run9" in (run.name or ""):
-        return 14
     return None
 
 
-def best_eval_acc(run):
-    """Return highest eval/acc_epoch seen across all logged epochs, as a percentage."""
-    try:
-        rows = list(run.scan_history(keys=["eval/acc_epoch"]))
-        vals = [r["eval/acc_epoch"] for r in rows if r.get("eval/acc_epoch") is not None]
-        if vals:
-            v = max(vals)
-            return v * 100 if v <= 1.0 else v  # fraction → %
-    except Exception:
-        pass
+def eval_acc_from_summary(run):
+    """Return eval/acc_epoch from run summary (last epoch), as a percentage."""
+    v = run.summary.get("eval/acc_epoch")
+    if v is not None:
+        return float(v) * 100 if float(v) <= 1.0 else float(v)
     return None
 
 
 def fetch_data():
-    api = wandb.Api()
+    api  = wandb.Api()
     runs = api.runs(f"{ENTITY}/{PROJECT}")
 
     records = []
     for run in runs:
-        if run.state not in ("finished", "running"):
+        if run.state not in ("finished", "running", "crashed"):
             continue
 
         wf = get_wf(run)
-        if wf is None:
-            print(f"  [skip] run {run.id} ({run.name}): could not determine wf")
+        if wf is None or wf == 14:   # skip run9 25-epoch pretest
             continue
 
-        acc = best_eval_acc(run)
-        auc = run.summary.get("test/auc_ovo_macro")
+        test_acc = run.summary.get("test/acc")
+        auc      = run.summary.get("test/auc_ovo_macro")
+        eval_acc = eval_acc_from_summary(run)
+
+        acc         = test_acc if test_acc is not None else eval_acc
+        acc_is_test = test_acc is not None
 
         if acc is None and auc is None:
             print(f"  [skip] run {run.id} ({run.name}, wf={wf}): no metrics yet")
             continue
 
-        print(f"  wf={wf:2d}  acc={f'{acc:.2f}%' if acc else 'n/a':8s}  auc={auc if auc else 'n/a'}  ({run.name}, {run.state})")
+        src = "test" if acc_is_test else "eval/last"
+        print(f"  wf={wf:2d}  acc={f'{acc:.3f}%' if acc else 'n/a':9s}({src})"
+              f"  auc={auc if auc else 'n/a'}  ({run.name}, {run.state})")
         records.append({
-            "wf": wf,
-            "run_id": run.id,
-            "run_name": run.name,
-            "best_eval_acc_%": acc,
+            "wf":          wf,
+            "run_id":      run.id,
+            "run_name":    run.name,
+            "acc_%":       acc,
+            "acc_is_test": acc_is_test,
             "test_auc_ovo": auc,
-            "state": run.state,
+            "state":       run.state,
         })
 
     if not records:
         return pd.DataFrame()
 
     df = pd.DataFrame(records)
-    # If there are duplicate wf values (e.g. restarts), keep the one with higher accuracy
-    df = df.sort_values(["wf", "best_eval_acc_%"], na_position="first")
+    df = df.sort_values(["wf", "acc_%"], na_position="first")
     df = df.drop_duplicates(subset="wf", keep="last")
     df = df.sort_values("wf").reset_index(drop=True)
     return df
 
 
-def plot(df, output):
-    has_acc = df["best_eval_acc_%"].notna().any()
-    has_auc = df["test_auc_ovo"].notna().any()
-    n_panels = int(has_acc) + int(has_auc)
+FRAME_CLR = "#d0d7df"   # light border around plot area
 
-    fig, axes = plt.subplots(1, n_panels, figsize=(5.5 * n_panels, 4.5), squeeze=False)
-    axes = axes[0]
+def _style_ax(ax):
+    """W&B-like style: light frame border, no tick marks, horizontal-only grid."""
+    for sp in ax.spines.values():
+        sp.set_visible(True)
+        sp.set_color(FRAME_CLR)
+        sp.set_linewidth(0.8)
+    ax.tick_params(colors=TEXT, labelsize=10, length=0)
+    ax.set_axisbelow(True)
+    ax.grid(True, axis="y", linestyle="-", linewidth=0.8, alpha=0.7, color=GRID)
+    ax.grid(False, axis="x")
 
-    panel_specs = []
-    if has_acc:
-        panel_specs.append(("best_eval_acc_%", "Validation accuracy (%)", "Accuracy vs weight bit width", "steelblue"))
-    if has_auc:
-        panel_specs.append(("test_auc_ovo", "Test OvO macro AUC", "AUC vs weight bit width", "darkorange"))
 
-    for ax, (col, ylabel, title, color) in zip(axes, panel_specs):
-        sub = df[df[col].notna()].copy()
+def plot_single(df, col, ylabel, title, output, baseline=None,
+                tested_col="acc_is_test"):
+    """Produce one W&B-style plot for `col` and save to `output`."""
+    sub = df[df[col].notna()].copy()
+    if sub.empty:
+        print(f"  [skip] no data for {col}, skipping {output}")
+        return
 
-        ax.plot(sub["wf"], sub[col], "o-", color=color, markersize=7,
-                linewidth=1.8, zorder=3, label="scan runs")
+    tested   = sub[sub[tested_col] == True]
+    untested = sub[sub[tested_col] == False]
 
-        # Annotate each point with its value
-        for _, row in sub.iterrows():
-            val = row[col]
-            label = f"{val:.2f}{'%' if col == 'best_eval_acc_%' else ''}"
-            ax.annotate(label, xy=(row["wf"], val), xytext=(0, 8),
-                        textcoords="offset points", ha="center", fontsize=8, color=color)
+    fig, ax = plt.subplots(figsize=(6.5, 4.8))
+    fig.patch.set_facecolor(BG)
+    ax.set_facecolor(BG)
 
-        # Dashed baseline line on accuracy panel
-        if col == "best_eval_acc_%":
-            ax.axhline(BASELINE_ACC, color="grey", linestyle="--", linewidth=1.2,
-                       label=f"Baseline {BASELINE_ACC}%")
-            ax.legend(fontsize=9)
+    ax.plot(sub["wf"], sub[col], "-", color=BLUE, linewidth=2.2, zorder=2, alpha=0.9)
+    if not tested.empty:
+        ax.plot(tested["wf"], tested[col], "o",
+                color=BLUE, markersize=8, zorder=3, label="test result")
+    if not untested.empty:
+        ax.plot(untested["wf"], untested[col], "o",
+                color=BLUE, markersize=8, zorder=3,
+                markerfacecolor=BG, markeredgewidth=2.0,
+                label="val acc epoch 39 (crashed — f=2 too coarse)")
 
-        ax.set_xlabel("Weight fractional bits (wf)", fontsize=12)
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.set_title(title, fontsize=13)
-        if not sub.empty:
-            ax.set_xticks(sorted(sub["wf"].unique()))
-        ax.grid(True, linestyle="--", alpha=0.45)
+    for _, row in sub.iterrows():
+        val = row[col]
+        lbl = f"{val:.3f}%" if col == "acc_%" else f"{val:.5f}"
+        ax.annotate(lbl, xy=(row["wf"], val), xytext=(0, 10),
+                    textcoords="offset points", ha="center",
+                    fontsize=8.5, color=BLUE, fontweight="bold")
 
-    plt.suptitle("ParT compression: weight bit-width scan\n(df=11, i=4)",
-                 fontsize=13, fontweight="bold", y=1.02)
-    plt.tight_layout()
-    plt.savefig(output, dpi=150, bbox_inches="tight")
-    print(f"\nPlot saved to: {output}")
+    if baseline is not None:
+        ax.axhline(baseline, color=GREY_DIM, linestyle="--", linewidth=1.2,
+                   alpha=0.8, label=f"FP baseline  {baseline}%", zorder=1)
+
+    _style_ax(ax)
+    ax.set_xlabel("Weight fractional bits (wf)", fontsize=12, color=TEXT, labelpad=8)
+    ax.set_ylabel(ylabel, fontsize=12, color=TEXT, labelpad=8)
+    ax.set_title(title, fontsize=13, color=TEXT, fontweight="bold", pad=12)
+    ax.set_xticks(sorted(sub["wf"].unique()))
+
+    ymin, ymax = ax.get_ylim()
+    ax.set_ylim(ymin, ymax + (ymax - ymin) * 0.10)
+
+    if baseline is not None or not untested.empty:
+        ax.legend(fontsize=9, framealpha=0.8, loc="lower right")
+
+    fig.text(0.5, 0.01,
+             "Data compressed to 16 bits (f=11, i=4, k=1)",
+             ha="center", fontsize=8.5, color=GREY_DIM, style="italic")
+
+    plt.tight_layout(rect=[0, 0.04, 1, 1])
+    plt.savefig(output, dpi=150, bbox_inches="tight", facecolor=BG)
+    plt.close(fig)
+    print(f"  Saved → {output}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot accuracy and AUC vs wf from W&B")
-    parser.add_argument("--output", default="acc_vs_wf.pdf", help="Output figure path")
-    parser.add_argument("--csv", default=None, help="Also save data table to CSV")
+    parser = argparse.ArgumentParser(
+        description="Plot accuracy and AUC vs wf from W&B (two files)")
+    parser.add_argument("--output-acc", default="acc_vs_wf.pdf")
+    parser.add_argument("--output-auc", default="auc_vs_wf.pdf")
+    parser.add_argument("--csv", default=None)
     args = parser.parse_args()
 
     print(f"Fetching runs from W&B ({ENTITY}/{PROJECT})...\n")
@@ -152,13 +200,22 @@ def main():
         return
 
     print("\n--- Summary table ---")
-    print(df[["wf", "run_name", "best_eval_acc_%", "test_auc_ovo", "state"]].to_string(index=False))
+    print(df[["wf", "run_name", "acc_%", "acc_is_test", "test_auc_ovo", "state"]].to_string(index=False))
 
     if args.csv:
         df.to_csv(args.csv, index=False)
         print(f"\nTable saved to: {args.csv}")
 
-    plot(df, args.output)
+    print()
+    plot_single(df, "acc_%",
+                ylabel="Accuracy (%)",
+                title="ParT weights compression — accuracy vs wf bits",
+                output=args.output_acc,
+                baseline=BASELINE_ACC)
+    plot_single(df, "test_auc_ovo",
+                ylabel="Test OvO macro AUC",
+                title="ParT weights compression — OvO AUC vs wf bits",
+                output=args.output_auc)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,7 @@
+wf,run_id,run_name,acc_%,acc_is_test,test_auc_ovo,state
+2,05roj5xm,scan-wf2,10.003828125,False,,crashed
+4,vmuhbynl,scan-wf4,80.190205,True,0.977796741310518,finished
+6,9cx22qry,scan-wf6,82.10606,True,0.98106971911475,finished
+8,3ou3tb56,scan-wf8,82.223525,True,0.9812521121130834,finished
+10,tlkry1q9,scan-wf10,82.308585,True,0.9813590339020516,finished
+12,gdr3xu4r,scan-wf12,82.26995000000001,True,0.9813003489516308,finished

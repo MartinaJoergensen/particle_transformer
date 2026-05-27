@@ -3,6 +3,7 @@ kind: Job
 metadata:
   name: pquant-scan-wf10
 spec:
+  backoffLimit: 0
   template:
     metadata:
       labels:
